@@ -7,6 +7,17 @@ from torch.autograd import Variable
 import numpy as np
 
 
+class EmptyLayer(nn.Module):
+    def __init__(self):
+        super(EmptyLayer, self).__init__()
+
+
+class DetectionLayer(nn.Module):
+    def __init__(self, anchors):
+        super(DetectionLayer, self).__init__()
+        self.anchors = anchors
+
+
 def parse_config(cfg_file):
     """Generate a list of nn blocks.
 
@@ -61,8 +72,18 @@ def parse_config(cfg_file):
 
 
 def create_modules(blocks):
+    """Generate NN layers and list them.
+
+    Arguments:
+        blocks {dict} -- Parsed dict from config.
+    Return:
+        net_info {dict} -- info about the input layer.
+        module_list {list} -- Array of NN layers listed sequentially but not connected.
+
+    """
     # create the actual nn using the blocks
-    net_info = blocks[0]     #Captures the information about the input and pre-processing    
+    # Captures the information about the input and pre-processing
+    net_info = blocks[0]
     module_list = nn.ModuleList()
     prev_filters = 3
     output_filters = []
@@ -85,6 +106,8 @@ def create_modules(blocks):
             stride = int(layer['stride'])
             padding = int(layer['pad'])
 
+            activation = int(layer['activation'])
+
             if padding:
                 pad = (kernel_size - 1) // 2
             else:
@@ -106,7 +129,101 @@ def create_modules(blocks):
                 batchN_layer = nn.BatchNorm2d(
                     num_features=filters
                 )
-                module.add_module('batch_{}'.format(index), batchN_layer)
-        
+                module.add_module('BatchN_{}'.format(index), batchN_layer)
+
+            # Check the type of activation and add
+            if activation == 'leaky':
+                # here the negative slope is 0.01 which is default
+                # but the tutorial uses 0.1 why?????
+                l_relu_layer = nn.LeakyReLU(
+                    inplace=True,
+                    negative_slope=0.01
+                )
+                module.add_module('LRelu_{}'.format(index), l_relu_layer)
+
+        elif layer['name'] == 'upsample':
+            stride = int(layer['stride'])
+            upsample_layer = nn.Upsample(
+                scale_factor=stride,
+                mode='bilinear'
+            )
+            module.add_module('Upsample_{}'.format(index), upsample_layer)
+
+        elif layer['name'] == 'route':
+            prev_layers = layer['layers']
+            # get the prev layers output
+            # concatenate them and send as output
+            try:
+                # route layers may have two / one layers
+                first_layer = int(prev_layers[0])
+                second_layer = int(prev_layers[1])
+            except:
+                first_layer = int(prev_layers)
+                second_layer = 0
+
+            # calculate the number of outputs
+            if not second_layer:  # no second layer
+                filters = output_filters[index + first_layer]
+            else:
+                filters = output_filters[index + first_layer] +\
+                    output_filters[second_layer]
+            route_layer = EmptyLayer()
+            module.add_module('Route_{}'.format(index), route_layer)
+        elif layer['name'] == 'shortcut':
+            # shortcut = Emptylayer()
+            prev_layers = layer['from']
+            activation = layer['activation']
+
+            # filters = output_filters[prev_layers]
+            shorcut_layer = EmptyLayer()
+            module.add_module('Shorcut_{}'.format(index), shorcut_layer)
+        elif layer['name'] == 'yolo':
+            masks = layer['mask']
+            masks = [int(mask) for mask in masks]
+
+            anchors = layer['anchors']
+            detection_layer = DetectionLayer(anchors)
+            module.add_module("Detection_{}".format(index),
+                              detection_layer)
+
+        module_list.append(module)
+        prev_filters = filters
+        output_filters.append(filters)
+    return (net_info, module_list)
 
 
+class Darknet(nn.Module):
+    """Construct the darknet NN model."""
+    def __init__(self, cfgfile):
+        super(Darknet, self).__init__()
+        self.blocks = parse_config(cfgfile)
+        self.net_info, self.module_list = create_modules(self.blocks)
+
+    def forward(self, x, CUDA):
+        modules = self.blocks[1:]
+        outputs = {}  # cache the outputs for route layer
+
+        for i, module in enumerate(modules):
+            module_name = (module['name'])
+
+            if module_name == 'convolutional' or module_name == 'upsampling':
+                x = self.module_list[i](x)
+            if module_name == 'route':
+                prev_layers = module['layers']
+                try:
+                    first_layer = int(prev_layers[0])
+                    second_layer = int(prev_layers[1])
+                except:
+                    first_layer = int(prev_layers)
+                    second_layer = 0
+
+                if not second_layer:
+                    x = outputs[i + first_layer]
+                else:
+                    x = torch.cat((outputs[i + first_layer],
+                                   outputs[second_layer]), 1)
+            if module_name == 'shortcut':
+                prev_layer = module['from']
+                activation = module['activation']
+                x = outputs[i - 1] + outputs[i + prev_layer]
+            if module_name == 'yolo':
