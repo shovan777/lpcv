@@ -25,9 +25,13 @@ def predict_transform(prediction, in_dim, anchors, num_classes, CUDA=True):
     """
     batch_size = prediction.size(0)
     stride = in_dim // prediction.size(2)
-    grid_size = in_dim // stride
+    # grid_size = in_dim // stride
+    grid_size = prediction.size(2)
     bbox_attrs = 5 + num_classes
     num_anchors = len(anchors)
+    # print('*******')
+    # print(num_anchors)
+    # print(batch_size, bbox_attrs*num_anchors, grid_size*grid_size)
 
     prediction = prediction.view(
         batch_size, bbox_attrs*num_anchors, grid_size*grid_size)
@@ -39,7 +43,7 @@ def predict_transform(prediction, in_dim, anchors, num_classes, CUDA=True):
     # which is larger (by a factor of stride) than the detection map.
     # thus, we must divide the anchors by the stride of the detection
     # feature map
-    anchors = [(a[0]/stride, a[1]/stride) for a in anchors]
+    anchors = [(int(a[0])/stride, int(a[1])/stride) for a in anchors]
 
     # Sigmoid the centre_X, centre_Y. and object confidence
     prediction[:, :, 0] = torch.sigmoid(prediction[:, :, 0])
@@ -67,8 +71,8 @@ def predict_transform(prediction, in_dim, anchors, num_classes, CUDA=True):
     anchors = torch.FloatTensor(anchors)
     if CUDA:
         anchors = anchors.cuda()
-    anchors = anchors.repeat(grid*grid_size, 1)
-    prediction[:, :, 2:4] = torch.exp(prediction[:, :, 2:4]*anchors)
+    anchors = anchors.repeat(grid_size*grid_size, 1).unsqueeze(0)
+    prediction[:, :, 2:4] = torch.exp(prediction[:, :, 2:4])*anchors
 
     # apply sigmoid activation to the class scores
     prediction[:, :, 5: 5 + num_classes] = torch.sigmoid((

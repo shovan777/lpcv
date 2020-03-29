@@ -1,3 +1,4 @@
+# external modules
 from __future__ import division
 
 import torch
@@ -5,6 +6,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
 import numpy as np
+
+# self made modules
+from utils import *
 
 
 class EmptyLayer(nn.Module):
@@ -106,7 +110,7 @@ def create_modules(blocks):
             stride = int(layer['stride'])
             padding = int(layer['pad'])
 
-            activation = int(layer['activation'])
+            activation = layer['activation']
 
             if padding:
                 pad = (kernel_size - 1) // 2
@@ -145,7 +149,8 @@ def create_modules(blocks):
             stride = int(layer['stride'])
             upsample_layer = nn.Upsample(
                 scale_factor=stride,
-                mode='bilinear'
+                mode='bilinear',
+                align_corners=True
             )
             module.add_module('Upsample_{}'.format(index), upsample_layer)
 
@@ -182,6 +187,8 @@ def create_modules(blocks):
             masks = [int(mask) for mask in masks]
 
             anchors = layer['anchors']
+            # throw any unmasked anchors
+            anchors = [(int(anchors[i][0]), int(anchors[i][1])) for i in masks]
             detection_layer = DetectionLayer(anchors)
             module.add_module("Detection_{}".format(index),
                               detection_layer)
@@ -194,6 +201,7 @@ def create_modules(blocks):
 
 class Darknet(nn.Module):
     """Construct the darknet NN model."""
+
     def __init__(self, cfgfile):
         super(Darknet, self).__init__()
         self.blocks = parse_config(cfgfile)
@@ -203,12 +211,15 @@ class Darknet(nn.Module):
         modules = self.blocks[1:]
         outputs = {}  # cache the outputs for route layer
 
+        write = 0  # this flag indicates the encounter
+        # of our first detection
+
         for i, module in enumerate(modules):
             module_name = (module['name'])
 
-            if module_name == 'convolutional' or module_name == 'upsampling':
+            if module_name == 'convolutional' or module_name == 'upsample':
                 x = self.module_list[i](x)
-            if module_name == 'route':
+            elif module_name == 'route':
                 prev_layers = module['layers']
                 try:
                     first_layer = int(prev_layers[0])
@@ -222,8 +233,48 @@ class Darknet(nn.Module):
                 else:
                     x = torch.cat((outputs[i + first_layer],
                                    outputs[second_layer]), 1)
-            if module_name == 'shortcut':
-                prev_layer = module['from']
+            elif module_name == 'shortcut':
+                prev_layer = int(module['from'])
                 activation = module['activation']
                 x = outputs[i - 1] + outputs[i + prev_layer]
-            if module_name == 'yolo':
+            elif module_name == 'yolo':
+                anchors = self.module_list[i][0].anchors
+                in_dim = int(self.net_info["height"])
+                num_classes = int(module["classes"])
+
+                # transform the detection
+                # print('*********')
+                # print(x.shape)
+                x = x.data
+                x = predict_transform(x, in_dim, anchors, num_classes, CUDA)
+                if not write:
+                    detections = x
+                    write = 1
+
+                else:
+                    detections = torch.cat((detections, x), 1)
+
+            outputs[i] = x
+        return detections
+
+
+def get_test_input():
+    img = cv2.imread("dog-cycle-car.png")
+    img = cv2.resize(img, (416, 416))  # Resize to the input dimension
+    # BGR -> RGB | H X W C -> C X H X W
+    img_ = img[:, :, ::-1].transpose((2, 0, 1))
+    # Add a channel at 0 (for batch) | Normalise
+    img_ = img_[np.newaxis, :, :, :]/255.0
+    img_ = torch.from_numpy(img_).float()  # Convert to float
+    img_ = Variable(img_)                     # Convert to Variable
+    return img_
+
+
+model = Darknet('cfg/yolov3.cfg')
+inp = get_test_input()
+pred = model(inp, torch.cuda.is_available())
+print(pred)
+print(pred.shape)
+
+# blocks = parse_config("cfg/yolov3.cfg")
+# print(len(create_modules(blocks)[1]))
