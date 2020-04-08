@@ -203,11 +203,113 @@ class Darknet(nn.Module):
     """Construct the darknet NN model."""
 
     def __init__(self, cfgfile):
+        """Initialize NN.
+
+        Arguments:
+            cfgfile {file} -- cfg file that defines the NN architecture.
+        """
         super(Darknet, self).__init__()
         self.blocks = parse_config(cfgfile)
         self.net_info, self.module_list = create_modules(self.blocks)
 
+    def load_weights(self, weightfile):
+        # open the weights file
+        with open(weightfile, 'rb') as file:
+            # The first 5 values are header information
+            # 1. Major version number
+            # 2. Minor Version Number
+            # 3. Subversion number
+            # 4,5. Images seen by the network (during training)
+            header = np.fromfile(file, dtype=np.int32, count=5)
+            self.header = torch.from_numpy(header)
+            self.seen = self.header[3]
+            weights = np.fromfile(file, dtype=np.float32)
+
+        ptr = 0
+        for i in range(len(self.module_list)):
+            module_type = self.blocks[i + 1]['name']
+
+            # If module_type is convolutional load weights
+            # Otherwise ignore.
+            if module_type == "convolutional":
+                model = self.module_list[i]
+                try:
+                    batch_normalize = int(self.blocks[i+1]["batch_normalize"])
+                except:
+                    batch_normalize = 0
+
+                conv = model[0]
+                if (batch_normalize):
+                    b_norm = model[1]
+
+                    # get the number of weights of batch norm layer
+                    num_bN_biases = b_norm.bias.numel()
+
+                    # Load the weights
+                    bN_biases = torch.from_numpy(
+                        weights[ptr:ptr + num_bN_biases])
+                    ptr += num_bN_biases
+
+                    bN_weights = torch.from_numpy(
+                        weights[ptr:ptr + num_bN_biases])
+                    ptr += num_bN_biases
+
+                    bN_running_mean = torch.from_numpy(
+                        weights[ptr:ptr + num_bN_biases])
+                    ptr += num_bN_biases
+
+                    bN_running_var = torch.from_numpy(
+                        weights[ptr:ptr + num_bN_biases])
+                    ptr += num_bN_biases
+
+                    # cast  the loaded weights into dims of model weights
+                    bN_biases = bN_biases.view_as(b_norm.bias.data)
+                    bN_weights = bN_weights.view_as(b_norm.weight.data)
+                    bN_running_mean = bN_running_mean.view_as(
+                        b_norm.running_mean)
+                    bN_running_var = bN_running_var.view_as(b_norm.running_var)
+
+                    # copy the data to the model
+                    b_norm.bias.data.copy_(bN_biases)
+                    b_norm.weight.data.copy_(bN_weights)
+                    b_norm.running_mean.copy_(bN_running_mean)
+                    b_norm.running_var.copy_(bN_running_var)
+                else:
+                    # number of biases
+                    num_biases = conv.bias.numel()
+
+                    # Load the weights
+                    conv_biases = torch.from_numpy(
+                        weights[ptr:ptr + num_biases])
+                    ptr += num_biases
+
+                    # reshape the loaded weights as per dims of the model weights
+                    conv_biases = conv_biases.view_as(conv.bias.data)
+
+                    # finally copy the data
+                    conv.bias.data.copy_(conv_biases)
+
+                # load the weights of the conv layers
+                num_weights = conv.weight.numel()
+
+                # load the weights
+                conv_weights = torch.from_numpy(weights[ptr:ptr + num_weights])
+                ptr += num_weights
+
+                conv_weights = conv_weights.view_as(conv.weight.data)
+                conv.weight.data.copy_(conv_weights)
+
+
     def forward(self, x, CUDA):
+        """Forward propagation function for darknet NN.
+
+        Arguments:
+            x {tensor} -- output
+            CUDA {bool} -- flags if to used dedicated GPUdatetime A combination of a date and a time. Attributes: ()
+
+        Returns:
+            tensor -- detection with box attr in each row.
+        """
         modules = self.blocks[1:]
         outputs = {}  # cache the outputs for route layer
 
@@ -278,3 +380,6 @@ print(pred.shape)
 
 # blocks = parse_config("cfg/yolov3.cfg")
 # print(len(create_modules(blocks)[1]))
+
+# model = Darknet("cfg/yolov3.cfg")
+model.load_weights("yolov3.weights")
