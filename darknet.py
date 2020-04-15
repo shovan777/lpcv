@@ -233,6 +233,7 @@ class Darknet(nn.Module):
             # Otherwise ignore.
             if module_type == "convolutional":
                 model = self.module_list[i]
+
                 try:
                     batch_normalize = int(self.blocks[i+1]["batch_normalize"])
                 except:
@@ -240,6 +241,7 @@ class Darknet(nn.Module):
 
                 conv = model[0]
                 if (batch_normalize):
+                    
                     b_norm = model[1]
 
                     # get the number of weights of batch norm layer
@@ -298,7 +300,6 @@ class Darknet(nn.Module):
 
                 conv_weights = conv_weights.view_as(conv.weight.data)
                 conv.weight.data.copy_(conv_weights)
-
 
     def forward(self, x, CUDA):
         """Forward propagation function for darknet NN.
@@ -375,8 +376,8 @@ def get_test_input():
 model = Darknet('cfg/yolov3.cfg')
 inp = get_test_input()
 pred = model(inp, torch.cuda.is_available())
-print(pred)
-print(pred.shape)
+# print(pred)
+# print(pred.shape)
 
 # blocks = parse_config("cfg/yolov3.cfg")
 # print(len(create_modules(blocks)[1]))
