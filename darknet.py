@@ -241,7 +241,7 @@ class Darknet(nn.Module):
 
                 conv = model[0]
                 if (batch_normalize):
-                    
+
                     b_norm = model[1]
 
                     # get the number of weights of batch norm layer
@@ -373,14 +373,14 @@ def get_test_input():
     return img_
 
 
-model = Darknet('cfg/yolov3.cfg')
-inp = get_test_input()
-pred = model(inp, torch.cuda.is_available())
-# print(pred)
-# print(pred.shape)
+# model = Darknet('cfg/yolov3.cfg')
+# inp = get_test_input()
+# pred = model(inp, torch.cuda.is_available())
+# # print(pred)
+# # print(pred.shape)
 
-# blocks = parse_config("cfg/yolov3.cfg")
-# print(len(create_modules(blocks)[1]))
+# # blocks = parse_config("cfg/yolov3.cfg")
+# # print(len(create_modules(blocks)[1]))
 
-# model = Darknet("cfg/yolov3.cfg")
-model.load_weights("yolov3.weights")
+# # model = Darknet("cfg/yolov3.cfg")
+# model.load_weights("yolov3.weights")
