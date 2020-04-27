@@ -218,7 +218,7 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
                 ]
             batch_ind = image_pred_1obj_pruned.new(image_pred_1obj_pruned.size(0),
                                                    1).fill_(batch_num)
-            #Repeat the batch_id for as many detections of the class cls in the image
+            # Repeat the batch_id for as many detections of the class cls in the image
             seq = batch_ind, image_pred_1obj_pruned
 
             if not write:
@@ -233,3 +233,51 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
         return output
     except:
         return 0
+
+
+def letterbox_img(img, inp_dim):
+    """Resize the image without changin aspect ratio.
+    Pad the remaining pixels at 128.
+
+    Arguments:
+        img {matrix} -- the image to be resized
+        inp_dim {array} -- dim to resize into
+
+    Returns:
+        matrix -- the resized image
+    """
+    img_w, img_h = img.shape[1], img.shape[0]
+    w, h = inp_dim
+    new_w = int(img_w * min(w/img_w, h/img_h))
+    new_h = int(img_h * min(w/img_w, h/img_h))
+
+    resized_image = cv2.resize(img, (new_w, new_h),
+                               interpolation=cv2.INTER_CUBIC)
+    canvas = np.full((inp_dim[1], inp_dim[0], 3), 128)
+    canvas[(h-new_h)//2:(h-new_h)//2 + new_h, (w-new_w) //
+           2:(w-new_w)//2 + new_w, :] = resized_image
+    return canvas
+
+
+def prep_image(img, inp_dim):
+    """Change the image format from opencv to pytorch.
+    HxWxC -> CxHxW
+    change the color channel from BGR to RGB.
+    Normalize the image.
+
+    Arguments:
+        img {matrix} -- img in HxWxC
+        inp_dim {matrix} -- dim of output image
+
+    Returns:
+        img_matrix  -- img in BxCxHxW
+    """
+    img = letterbox_img(img, inp_dim)
+    # reverse the BGR channel to RGB
+    # with the -1 slicing
+    # HxWxC (opencv format) to CxHxW (pytorch format)
+    img = img[:, :, ::-1].transpose((2, 0, 1)).copy()
+    # normalize
+    # set the batch dim to 1
+    img = torch.from_numpy(img).float().div(255.0).unsqueeze(0)
+    return img
